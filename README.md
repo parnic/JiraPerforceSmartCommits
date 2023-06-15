@@ -1,6 +1,48 @@
 # Purpose
 This is an implementation of Atlassian's Smart Commits concept for Perforce Swarm. Atlassian's documentation is [here](https://confluence.atlassian.com/bitbucket/processing-jira-software-issues-with-smart-commit-messages-298979931.html). This implementation is nearly identical to their spec. The general idea is that you can use commands in your changelist description to carry out actions on JIRA issues.
 
+# Installation
+* Place the JiraPerforceSmartCommits directory into your Swarm installation's "module" directory.
+* Edit your Swarm's data/config.php to add the below configuration settings.
+* Add this module to your config/custom.modules.config.php file (create it if it doesn't exist). The file should look something like:
+```php
+<?php
+\Laminas\Loader\AutoloaderFactory::factory(
+    array(
+        'Laminas\Loader\StandardAutoloader' => array(
+            'namespaces' => array(
+                'JiraPerforceSmartCommits'       => BASE_PATH . '/module/JiraPerforceSmartCommits/src',
+            )
+        )
+    )
+);
+return [
+    'JiraPerforceSmartCommits',
+];
+```
+
+# Configuration
+The following configurables are available for this module:
+```php
+    'jirasmartcommits' => array(
+        'host'      => 'https://your-studio.atlassian.net',
+        'user'      => 'username',
+        'password'  => 'password',
+        'cite_submitter_username' => true,
+        'link_changelist_comment_reference' => true,
+    ),
+```
+
+This block should be a peer of `'p4'`.
+
+* `host` - URL for your installed JIRA web interface or cloud address (start with https:// or  http://)
+* `user` - Jira Cloud: the username used to connect to your Atlassian account, Jira on-premises: the username required for Jira API access
+* `password` - Jira Cloud: a special API token obtained from https://id.atlassian.com/manage/api-tokens, Jira on-premises: the password required for Jira API access
+* `cite_submitter_username` - if Perforce and Jira have the same users, leave this option on to reference the submitter in any comment made.
+* `link_changelist_comment_reference` - whether to link the changelist number in a comment back to Swarm's change
+
+Vote on https://jira.atlassian.com/browse/JRASERVER-35124 to allow comments to be made on behalf of the submitter for on-premises installations.
+
 # Usage
 On a single line in your changelist description, reference one or more JIRA issues then enter one or more commands. Valid commands are:
 
