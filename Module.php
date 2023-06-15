@@ -1,78 +1,18 @@
 <?php
 
-namespace JiraSmartCommits;
+namespace JiraPerforceSmartCommits;
 
-use P4\Spec\Change;
-use Zend\Http\Client as HttpClient;
-use Zend\Json\Json;
-use Zend\Mvc\MvcEvent;
-use Zend\ServiceManager\ServiceLocatorInterface as ServiceLocator;
+use Application\Config\ConfigManager;
+use Laminas\Http\Client as HttpClient;
+use Laminas\Json\Json;
+use Laminas\ServiceManager\ServiceLocatorInterface as ServiceLocator;
 
 class Module
 {
-    public function onBootstrap(MvcEvent $event)
+    public static function handleSmartCommitMessage($item, ServiceLocator $services)
     {
-        $services = $event->getApplication()->getServiceManager();
-        $events   = $services->get('queue')->getEventManager();
-        $config   = $this->getJiraConfig($services);
-        $projects = $this->getProjects();
-        $module   = $this;
-
-        // bail out if we lack a host, we won't be able to do anything
-        if (!$config['host']) {
-            return;
-        }
-
-        // connect to worker 1 startup to refresh our cache of jira project ids
-        $events->attach(
-            'worker.startup',
-            function ($event) use ($services, $module) {
-                // only run for the first worker.
-                if ($event->getParam('slot') !== 1) {
-                    return;
-                }
-
-                // attempt to request the list of projects, if the request fails keep
-                // whatever list we have though as something is better than nothing.
-                $cacheDir = $module->getCacheDir();
-                $result   = $module->doRequest('get', 'project', null, $services);
-                if ($result !== false) {
-                    $projects = array();
-                    foreach ((array) $result as $project) {
-                        if (isset($project['key'])) {
-                            $projects[] = $project['key'];
-                        }
-                    }
-
-                    file_put_contents($cacheDir . '/projects', Json::encode($projects));
-                }
-            },
-            -300
-        );
-
-        $events->attach(
-            'task.commit',
-            function ($event) use ($services, $module) {
-                $change = $event->getParam('change');
-
-                if (!$change instanceof Change || !$change->isSubmitted()) {
-                    return;
-                }
-
-                try {
-                    $module->handleSmartCommitMessage($change, $services);
-                } catch (\Exception $e) {
-                    $services->get('logger')->err($e);
-                }
-            },
-            -300
-        );
-    }
-
-    public function handleSmartCommitMessage($item, ServiceLocator $services)
-    {
-        $callouts = $this->getJiraCallouts($item->getDescription());
-        $config = $this->getJiraConfig($services);
+        $callouts = self::getJiraCallouts($item->getDescription());
+        $config = $services->get('config');
         $logger = $services->get('logger');
 
         foreach ($callouts as $callout) {
@@ -81,21 +21,21 @@ class Module
             }
 
             foreach ($callout['issues'] as $issue) {
-                $commentCommand = $this->getCommand('comment', $callout['commands']);
-                $timeCommand = $this->getCommand('time', $callout['commands']);
-                $transitionCommands = $this->getTransitionCommands($callout['commands']);
+                $commentCommand = self::getCommand('comment', $callout['commands']);
+                $timeCommand = self::getCommand('time', $callout['commands']);
+                $transitionCommands = self::getTransitionCommands($callout['commands']);
 
                 if ($commentCommand && array_key_exists('args', $commentCommand)) {
                     $logger->info('JiraSmartCommits: building comment');
 
-                    if ($config['cite_submitter_username']) {
+                    if (ConfigManager::getValue($config, 'jirasmartcommits.cite_submitter_username', true)) {
                         $prefix = "[~" . $item->getUser() . "] says in c";
                     } else {
                         $prefix = "C";
                     }
 
-                    if ($config['link_changelist_comment_reference']) {
-                        $qualifiedUrl = $services->get('viewhelpermanager')->get('qualifiedUrl');
+                    if (ConfigManager::getValue($config, 'jirasmartcommits.link_changelist_comment_reference', true)) {
+                        $qualifiedUrl = $services->get('ViewHelperManager')->get('qualifiedUrl');
                         $changelist = "[" . $item->getId() . "|" . $qualifiedUrl('change', array('change' => $item->getId())) . "]";
                     } else {
                         $changelist = $item->getId();
@@ -122,7 +62,7 @@ class Module
                         $timeCommented = true;
                     }
 
-                    if ($this->doRequest(
+                    if (self::doRequest(
                         'post',
                         "issue/$issue/worklog",
                         $msg,
@@ -137,7 +77,7 @@ class Module
                 if (count($transitionCommands) > 0) {
                     $logger->info('JiraSmartCommits: asked for transition(s)');
 
-                    $availableTransitions = $this->doRequest(
+                    $availableTransitions = self::doRequest(
                         'get',
                         "issue/$issue/transitions",
                         null,
@@ -190,7 +130,7 @@ class Module
                             $transitionCommented = true;
                         }
 
-                        if ($this->doRequest(
+                        if (self::doRequest(
                             'post',
                             "issue/$issue/transitions",
                             $msg,
@@ -208,7 +148,7 @@ class Module
                 if (isset($commentObj) && !isset($commented)) {
                     $logger->info('JiraSmartCommits: comment wanted, not already handled. handling.');
 
-                    $this->doRequest(
+                    self::doRequest(
                         'post',
                         "issue/$issue/comment",
                         $commentObj,
@@ -220,7 +160,7 @@ class Module
         }
     }
 
-    private function getCommand($key, $commandArray)
+    private static function getCommand($key, $commandArray)
     {
         foreach ($commandArray as $command) {
             if (is_array($command) && array_key_exists('command', $command) && $command['command'] == $key) {
@@ -231,7 +171,7 @@ class Module
         return null;
     }
 
-    private function getTransitionCommands($commandArray)
+    private static function getTransitionCommands($commandArray)
     {
         $ret = array();
 
@@ -244,16 +184,16 @@ class Module
         return $ret;
     }
 
-    public function getJiraCallouts($value)
+    public static function getJiraCallouts($value)
     {
-        $projects = array_map('preg_quote', $this->getProjects());
+        $projects = array_map('preg_quote', self::getProjects());
         $callouts = array();
 
         foreach (explode("\n", $value) as $line) {
             $mode = 0;
             foreach (preg_split('/(\s+)/', $line) as $word) {
-                $issues = $this->getJiraIssue($word, $projects);
-                $command = $this->getSmartCommitCommand($word);
+                $issues = self::getJiraIssue($word, $projects);
+                $command = self::getSmartCommitCommand($word);
 
                 if (!isset($last)) {
                     $last = array();
@@ -295,7 +235,7 @@ class Module
         return $callouts;
     }
 
-    public function getJiraIssue($value, $projects)
+    public static function getJiraIssue($value, $projects)
     {
         if (preg_match_all("/((?:" . implode('|', $projects) . ")-[0-9]+)/", $value, $match)) {
             return $match[1];
@@ -304,7 +244,7 @@ class Module
         return null;
     }
 
-    public function getSmartCommitCommand($value)
+    public static function getSmartCommitCommand($value)
     {
         if (strpos($value, '#') === 0 && strlen($value) > 1) {
             return strtolower(substr($value, 1));
@@ -313,27 +253,27 @@ class Module
         return null;
     }
 
-    public function doRequest($method, $resource, $data, ServiceLocator $services)
+    public static function doRequest($method, $resource, $data, ServiceLocator $services)
     {
         // we commonly do a number of requests and don't want one failure to bork them all,
         // if anything goes wrong just log it
         try {
             // setup the client and request details
-            $config = $this->getJiraConfig($services);
-            $url    = $config['host'] . '/rest/api/latest/' . $resource;
+            $config = $services->get('config');
+            $url    = ConfigManager::getValue($config, 'jirasmartcommits.host') . '/rest/api/latest/' . $resource;
             $client = new HttpClient;
             $client->setUri($url)
                    ->setHeaders(array('Content-Type' => 'application/json'))
                    ->setMethod($method);
 
             // set the http client options; including any special overrides for our host
-            $commandtions = $services->get('config') + array('http_client_options' => array());
-            $commandtions = (array) $commandtions['http_client_options'];
-            if (isset($commandtions['hosts'][$client->getUri()->getHost()])) {
-                $commandtions = (array) $commandtions['hosts'][$client->getUri()->getHost()] + $commandtions;
+            $options = $services->get('config') + array('http_client_options' => array());
+            $options = (array) $options['http_client_options'];
+            if (isset($options['hosts'][$client->getUri()->getHost()])) {
+                $options = (array) $options['hosts'][$client->getUri()->getHost()] + $options;
             }
-            unset($commandtions['hosts']);
-            $client->setOptions($commandtions);
+            unset($options['hosts']);
+            $client->setOptions($options);
 
             if ($method == 'post') {
                 $client->setRawBody(Json::encode($data));
@@ -341,16 +281,16 @@ class Module
                 $client->setParameterGet((array) $data);
             }
 
-            if ($config['user']) {
-                $client->setAuth($config['user'], $config['password']);
+            if (ConfigManager::getValue($config, 'jirasmartcommits.user')) {
+                $client->setAuth(ConfigManager::getValue($config, 'jirasmartcommits.user'), ConfigManager::getValue($config, 'jirasmartcommits.password'));
             }
 
             // attempt the request and log any errors
-            $services->get('logger')->info('JIRA making ' . $method . ' request to resource: ' . $url, (array) $data);
+            $services->get('logger')->info('JiraSmartCommits making ' . $method . ' request to resource: ' . $url, (array) $data);
             $response = $client->dispatch($client->getRequest());
             if (!$response->isSuccess()) {
                 $services->get('logger')->err(
-                    'JIRA failed to ' . $method . ' resource: ' . $url . ' (' .
+                    'JiraSmartCommits failed to ' . $method . ' resource: ' . $url . ' (' .
                     $response->getStatusCode() . " - " . $response->getReasonPhrase() . ').',
                     array(
                         'request'   => $client->getLastRawRequest(),
@@ -371,7 +311,7 @@ class Module
         return false;
     }
 
-    public function getProjects()
+    public static function getProjects()
     {
         $file = DATA_PATH . '/cache/jirasmartcommits/projects';
         if (!file_exists($file)) {
@@ -381,7 +321,7 @@ class Module
         return (array) json_decode(file_get_contents($file), true);
     }
 
-    public function getCacheDir()
+    public static function getCacheDir()
     {
         $dir = DATA_PATH . '/cache/jirasmartcommits';
         if (!is_dir($dir)) {
@@ -399,32 +339,8 @@ class Module
         return $dir;
     }
 
-    public function getJiraConfig(ServiceLocator $services)
-    {
-        $config  = $services->get('config');
-        $config  = isset($config['jirasmartcommits']) ? $config['jirasmartcommits'] : array();
-        $config += array('host' => null, 'user' => null, 'password' => null, 'job_field' => null);
-
-        $config['host'] = rtrim($config['host'], '/');
-        if ($config['host'] && strpos(strtolower($config['host']), 'http') !== 0) {
-            $config['host'] = 'http://' . $config['host'];
-        }
-        return $config;
-    }
-
     public function getConfig()
     {
         return include __DIR__ . '/config/module.config.php';
-    }
-
-    public function getAutoloaderConfig()
-    {
-        return array(
-            'Zend\Loader\StandardAutoloader' => array(
-                'namespaces' => array(
-                    __NAMESPACE__ => __DIR__ . '/src/' . __NAMESPACE__,
-                ),
-            ),
-        );
     }
 }
