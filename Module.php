@@ -14,6 +14,8 @@ class Module
         $callouts = self::getJiraCallouts($item->getDescription());
         $config = $services->get('config');
         $logger = $services->get('logger');
+        $transitionsHaveScreens = ConfigManager::getValue($config, 'jirasmartcommits.transitions_have_screens');
+        $clField = ConfigManager::getValue($config, 'jirasmartcommits.fixed_changelist_field');
 
         foreach ($callouts as $callout) {
             if (!array_key_exists('issues', $callout) || !array_key_exists('commands', $callout)) {
@@ -41,7 +43,7 @@ class Module
                         $changelist = $item->getId();
                     }
 
-                    $commentStr = "${prefix}hangelist $changelist: ${commentCommand['args']}";
+                    $commentStr = "{$prefix}hangelist $changelist: {$commentCommand['args']}";
                     $commentObj = array(
                         'body' => $commentStr,
                     );
@@ -92,7 +94,7 @@ class Module
                                 $logger->debug("JiraSmartCommits:     available transition: $availableTransitionName");
 
                                 foreach ($transitionCommands as $transitionCommand) {
-                                    $logger->debug("JiraSmartCommits:       comparing to ${transitionCommand['command']}");
+                                    $logger->debug("JiraSmartCommits:       comparing to {$transitionCommand['command']}");
 
                                     if (strpos($availableTransitionName, $transitionCommand['command']) === 0) {
                                         $transitionId = $availableTransition['id'];
@@ -116,7 +118,7 @@ class Module
                             ),
                         );
 
-                        if (isset($commentObj) && !isset($commented)) {
+                        if (isset($commentObj) && !isset($commented) && $transitionsHaveScreens) {
                             $logger->info('JiraSmartCommits:    bundling comment');
 
                             $msg['update'] = array(
@@ -137,6 +139,26 @@ class Module
                             $services) === false && isset($transitionCommented)) {
                             // if resolving fails but we wanted a comment, try to still get the comment posted
                             unset($commented);
+                        }
+
+                        // todo: respect $transitionsHaveScreens value before doing this separately
+                        if ($clField && $transitionId) {
+                            $logger->info('JiraSmartCommits: setting changelist field value along with transition.');
+
+                            $clFieldNumeric = ConfigManager::getValue($config, 'jirasmartcommits.fixed_changelist_field_is_numeric');
+                            $clObj = array($clField => "{$item->getId()}");
+                            if ($clFieldNumeric) {
+                                $clObj = array($clField => $item->getId());
+                            }
+                            $msg = array(
+                                'fields' => $clObj,
+                            );
+
+                            self::doRequest(
+                                'put',
+                                "issue/$issue",
+                                $msg,
+                                $services);
                         }
                     } else {
                         $logger->notice('JiraSmartCommits: unable to locate a valid transition id. ' . print_r($transitionCommands, true) . print_r($availableTransitions, true));
@@ -275,7 +297,7 @@ class Module
             unset($options['hosts']);
             $client->setOptions($options);
 
-            if ($method == 'post') {
+            if ($method == 'post' || $method == 'put') {
                 $client->setRawBody(Json::encode($data));
             } else {
                 $client->setParameterGet((array) $data);

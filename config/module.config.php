@@ -39,5 +39,8 @@ return [
         'cite_submitter_username' => true, // if Perforce and jira have the same users, leave this option on to reference the submitter in any comment.
         									// vote on https://jira.atlassian.com/browse/JRASERVER-35124 to allow comments to be made on behalf of the submitter
         'link_changelist_comment_reference' => true, // whether to link the changelist number in a comment back to swarm's change
+        'fixed_changelist_field' => '', // the name of a field to put the fixed changelist number in when resolving an issue
+        'fixed_changelist_field_is_numeric' => true, // whether the changelist field is a numeric type in jira or not
+        'transitions_have_screens' => false,
     )
 ];
