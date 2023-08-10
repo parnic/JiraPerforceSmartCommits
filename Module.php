@@ -158,7 +158,7 @@ class Module
 
                             // if this isn't a "done" transition, make sure the fixed field is nulled out
                             if ($transitionToStatusType && $transitionToStatusType !== 'done') {
-                                $logger->debug("JiraSmartCommits: nulling changelist field value because target status is not a Done status (is {$transitionToStatusType}.");
+                                $logger->debug("JiraSmartCommits: nulling changelist field value because target status is not a Done status (is {$transitionToStatusType}).");
                                 $clObj = array($clField => null);
                             } else {
                                 $logger->debug("JiraSmartCommits: desired status is a 'done' status type, continuing with setting fixed field to {$item->getId()}.");
