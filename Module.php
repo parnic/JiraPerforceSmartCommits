@@ -86,6 +86,7 @@ class Module
                         $services);
 
                     $transitionId = null;
+                    $transitionToStatusType = null;
                     if ($availableTransitions && is_array($availableTransitions) && array_key_exists('transitions', $availableTransitions)
                         && is_array($availableTransitions['transitions'])) {
                         foreach ($availableTransitions['transitions'] as $availableTransition) {
@@ -98,6 +99,10 @@ class Module
 
                                     if (strpos($availableTransitionName, $transitionCommand['command']) === 0) {
                                         $transitionId = $availableTransition['id'];
+
+                                        if (isset($availableTransition['to']) && isset($availableTransition['to']['statusCategory'])) {
+                                            $transitionToStatusType = $availableTransition['to']['statusCategory']['key'];
+                                        }
                                         break;
                                     }
                                 }
@@ -150,6 +155,15 @@ class Module
                             if ($clFieldNumeric) {
                                 $clObj = array($clField => $item->getId());
                             }
+
+                            // if this isn't a "done" transition, make sure the fixed field is nulled out
+                            if ($transitionToStatusType && $transitionToStatusType !== 'done') {
+                                $logger->debug("JiraSmartCommits: nulling changelist field value because target status is not a Done status (is {$transitionToStatusType}).");
+                                $clObj = array($clField => null);
+                            } else {
+                                $logger->debug("JiraSmartCommits: desired status is a 'done' status type, continuing with setting fixed field to {$item->getId()}.");
+                            }
+
                             $msg = array(
                                 'fields' => $clObj,
                             );
