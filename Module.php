@@ -90,14 +90,22 @@ class Module
                     if ($availableTransitions && is_array($availableTransitions) && array_key_exists('transitions', $availableTransitions)
                         && is_array($availableTransitions['transitions'])) {
                         foreach ($availableTransitions['transitions'] as $availableTransition) {
+                            $availableTransitionName = "";
+                            $statusName = "";
                             if (is_array($availableTransition) && array_key_exists('name', $availableTransition)) {
                                 $availableTransitionName = str_replace(' ', '-', strtolower($availableTransition['name']));
-                                $logger->debug("JiraSmartCommits:     available transition: $availableTransitionName");
+                            }
+                            if (is_array($availableTransition) && array_key_exists('to', $availableTransition) && is_array($availableTransition['to']) && array_key_exists('name', $availableTransition['to'])) {
+                                $statusName = str_replace(' ', '-', strtolower($availableTransition['to']['name']));
+                            }
+
+                            if ($availableTransitionName || $statusName) {
+                                $logger->debug("JiraSmartCommits:     available transition: $availableTransitionName (to status: $statusName)");
 
                                 foreach ($transitionCommands as $transitionCommand) {
                                     $logger->debug("JiraSmartCommits:       comparing to {$transitionCommand['command']}");
 
-                                    if (strpos($availableTransitionName, $transitionCommand['command']) === 0) {
+                                    if (strpos($availableTransitionName, $transitionCommand['command']) === 0 || strpos($statusName, $transitionCommand['command']) === 0) {
                                         $transitionId = $availableTransition['id'];
 
                                         if (isset($availableTransition['to']) && isset($availableTransition['to']['statusCategory'])) {
